@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f766e">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+<title>Revisão Residência</title>
+<style>
+:root{--bg:#f6f5f1;--card:#fff;--ink:#1c1b19;--muted:#6b6860;--line:#e6e3dc;--accent:#0f766e;--accent-ink:#fff;--late:#b45309;--ok:#15803d;--soft:#e7f3f1}
+@media (prefers-color-scheme:dark){:root{--bg:#121413;--card:#1b1e1d;--ink:#eceae4;--muted:#9a978f;--line:#2b2f2d;--accent:#2dd4bf;--accent-ink:#06201c;--late:#f59e0b;--ok:#4ade80;--soft:#16302d}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:640px;margin:0 auto;padding:20px 16px calc(48px + env(safe-area-inset-bottom))}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+h1{margin:0;font-size:28px;letter-spacing:-.02em}
+#date{margin:2px 0 0;color:var(--muted);text-transform:capitalize}
+#refresh{width:44px;height:44px;border-radius:50%;border:1px solid var(--line);background:var(--card);color:var(--ink);font-size:20px;cursor:pointer}
+#refresh.spin{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.progress{height:8px;border-radius:99px;background:var(--line);margin:16px 0 6px;overflow:hidden}
+#bar{height:100%;width:0;background:var(--accent);transition:width .3s}
+#progressText{margin:0 0 16px;color:var(--muted);font-size:14px}
+.tabs{display:flex;gap:8px;margin-bottom:16px}
+.tabs button{flex:1;min-height:44px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;font-weight:600;cursor:pointer}
+.tabs button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:12px}
+.card h2{margin:8px 0 14px;font-size:18px;line-height:1.3}
+.meta{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;color:var(--muted);font-size:13px}
+.chip{background:var(--soft);color:var(--accent);padding:2px 10px;border-radius:99px;font-weight:600}
+.badge{background:var(--accent);color:var(--accent-ink);padding:2px 10px;border-radius:99px;font-weight:700}
+.late{color:var(--late);font-weight:600}
+form{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end}
+label{display:grid;gap:4px;font-size:13px;color:var(--muted)}
+input{width:100%;min-height:44px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font:inherit;font-size:16px;padding:0 12px}
+output{grid-column:1/-1;color:var(--muted);font-size:14px;min-height:20px}
+form button{min-height:44px;padding:0 18px;border:0;border-radius:10px;background:var(--accent);color:var(--accent-ink);font:inherit;font-weight:700;cursor:pointer}
+form button:disabled{opacity:.6}
+.card.done{border-color:var(--ok)}
+.result{margin:0;color:var(--ok);font-weight:600}
+.more{width:100%;min-height:44px;border-radius:12px;border:1px dashed var(--line);background:transparent;color:var(--muted);font:inherit;cursor:pointer}
+.empty{text-align:center;color:var(--muted);padding:40px 0}
+#toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translate(-50%,20px);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:99px;font-size:14px;opacity:0;pointer-events:none;transition:.25s}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="top">
+      <div><h1>Revisão</h1><p id="date"></p></div>
+      <button id="refresh" aria-label="Atualizar">↻</button>
+    </div>
+    <div class="progress"><div id="bar"></div></div>
+    <p id="progressText"></p>
+    <nav class="tabs">
+      <button data-tab="today" class="on">Hoje</button>
+      <button data-tab="late">Atrasados <span id="lateCount"></span></button>
+    </nav>
+  </header>
+  <main id="list"></main>
+</div>
+<div id="toast" role="status"></div>
+<script>
+// API_URL: endereço do web app publicado no Apps Script
+const API_URL = "COLE_AQUI_A_URL_DO_APPS_SCRIPT";
+const STAGE_NAMES = ["Estudo novo", "1ª revisão", "2ª revisão", "3ª revisão", "4ª revisão", "5ª revisão", "6ª revisão"];
+const LATE_PAGE = 15;
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const shortDate = iso => iso.slice(8, 10) + "/" + iso.slice(5, 7);
+const state = { items: [], today: new Date().toLocaleDateString("sv-SE"), tab: "today", lateShown: LATE_PAGE };
+
+function askToken() {
+  const token = (prompt("Senha do site:") || "").trim();
+  if (token) localStorage.setItem("token", token);
+  return token;
+}
+
+const getToken = () => localStorage.getItem("token") || askToken();
+
+async function load() {
+  const res = await fetch(`${API_URL}?token=${encodeURIComponent(getToken())}`);
+  const data = await res.json();
+  if (data.error === "token") {
+    localStorage.removeItem("token");
+    throw new Error("Senha incorreta");
+  }
+  return data;
+}
+
+async function save(item, questions, hits) {
+  const body = JSON.stringify({ token: getToken(), row: item.row, stage: item.stage, questions, hits });
+  const res = await fetch(API_URL, { method: "POST", body });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error === "token" ? "Senha incorreta" : "Não foi possível salvar");
+  return data;
+}
+
+function persist() {
+  try { localStorage.setItem("cache", JSON.stringify({ today: state.today, items: state.items })); } catch (e) {}
+}
+
+function restore() {
+  try {
+    const cache = JSON.parse(localStorage.getItem("cache") || "null");
+    if (cache && cache.today === state.today) Object.assign(state, cache);
+  } catch (e) {}
+}
+
+function toast(message) {
+  const el = $("toast");
+  el.textContent = message;
+  el.classList.add("show");
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => el.classList.remove("show"), 3000);
+}
+
+function daysLate(item) {
+  return Math.round((Date.parse(state.today) - Date.parse(item.date)) / 864e5);
+}
+
+function sorted(items, tab) {
+  const doneLast = (a, b) => (a.state === "done") - (b.state === "done");
+  const byPriority = (a, b) => b.priority - a.priority;
+  if (tab === "today") return [...items].sort((a, b) => doneLast(a, b) || a.stage - b.stage || byPriority(a, b));
+  return [...items].sort((a, b) => doneLast(a, b) || byPriority(a, b) || a.date.localeCompare(b.date));
+}
+
+function card(item) {
+  const late = item.kind === "late" ? `<span class="late">${daysLate(item)} d de atraso</span>` : "";
+  const badge = item.stage === 0 && item.kind === "today" ? `<span class="badge">Matéria do dia</span>` : "";
+  const meta = `<div class="meta">${badge}<span class="chip">${esc(item.area)}</span><span>${STAGE_NAMES[item.stage]}</span><span>Incidência ${item.incidence}</span>${late}</div>`;
+  const head = `<article class="card${item.state === "done" ? " done" : ""}" data-row="${item.row}" data-stage="${item.stage}">${meta}<h2>${esc(item.subject)}</h2>`;
+  if (item.state === "done") {
+    const pct = Math.round((item.hits / item.questions) * 100);
+    const next = item.next ? ` · próxima revisão ${shortDate(item.next)}` : "";
+    return `${head}<p class="result">✓ ${item.hits}/${item.questions} · ${pct}%${next}</p></article>`;
+  }
+  return `${head}<form><label>Questões<input name="q" type="number" inputmode="numeric" min="1"></label><label>Acertos<input name="h" type="number" inputmode="numeric" min="0"></label><button>Salvar</button><output></output></form></article>`;
+}
+
+function render() {
+  const todayItems = state.items.filter(i => i.kind === "today");
+  const lateItems = state.items.filter(i => i.kind === "late");
+  const done = todayItems.filter(i => i.state === "done").length;
+  $("date").textContent = new Date(state.today + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+  $("bar").style.width = todayItems.length ? `${(done / todayItems.length) * 100}%` : "0";
+  $("progressText").textContent = todayItems.length ? `${done} de ${todayItems.length} concluídos hoje` : "Nada agendado para hoje";
+  const pendingLate = lateItems.filter(i => i.state === "pending").length;
+  $("lateCount").textContent = pendingLate ? `(${pendingLate})` : "";
+  document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === state.tab));
+  const shown = state.tab === "today" ? sorted(todayItems, "today") : sorted(lateItems, "late");
+  const visible = state.tab === "late" ? shown.slice(0, state.lateShown) : shown;
+  const more = state.tab === "late" && shown.length > visible.length ? `<button class="more" id="more">Mostrar mais (${shown.length - visible.length})</button>` : "";
+  $("list").innerHTML = visible.length ? visible.map(card).join("") + more : `<p class="empty">Nada pendente aqui.</p>`;
+}
+
+async function refresh() {
+  $("refresh").classList.add("spin");
+  try {
+    const data = await load();
+    state.today = data.today;
+    state.items = data.items;
+    persist();
+    render();
+  } catch (err) {
+    toast(err.name === "TypeError" ? "Sem conexão com a planilha" : err.message);
+  } finally {
+    $("refresh").classList.remove("spin");
+  }
+}
+
+function findItem(article) {
+  return state.items.find(i => i.row === Number(article.dataset.row) && i.stage === Number(article.dataset.stage));
+}
+
+document.querySelector(".tabs").addEventListener("click", ev => {
+  const button = ev.target.closest("button");
+  if (!button) return;
+  state.tab = button.dataset.tab;
+  render();
+});
+
+$("refresh").addEventListener("click", refresh);
+
+$("list").addEventListener("click", ev => {
+  if (ev.target.id !== "more") return;
+  state.lateShown += LATE_PAGE;
+  render();
+});
+
+$("list").addEventListener("input", ev => {
+  const form = ev.target.closest("form");
+  if (!form) return;
+  const questions = Number(form.q.value);
+  const hits = Number(form.h.value);
+  form.querySelector("output").textContent = questions > 0 && form.h.value !== "" && hits <= questions ? `${Math.round((hits / questions) * 100)}% de acertos` : "";
+});
+
+$("list").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const form = ev.target;
+  const item = findItem(form.closest("article"));
+  const questions = Number(form.q.value);
+  const hits = Number(form.h.value);
+  const valid = form.q.value !== "" && form.h.value !== "" && Number.isInteger(questions) && Number.isInteger(hits) && questions > 0 && hits >= 0 && hits <= questions;
+  if (!valid) return toast("Confira questões e acertos");
+  const button = form.querySelector("button");
+  button.disabled = true;
+  button.textContent = "Salvando…";
+  try {
+    const result = await save(item, questions, hits);
+    Object.assign(item, { state: "done", questions, hits, next: result.next });
+    persist();
+    render();
+  } catch (err) {
+    toast(err.name === "TypeError" ? "Sem conexão com a planilha" : err.message);
+    button.disabled = false;
+    button.textContent = "Salvar";
+  }
+});
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+restore();
+render();
+refresh();
+</script>
+</body>
+</html>
