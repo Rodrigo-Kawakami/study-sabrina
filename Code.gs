@@ -1,6 +1,6 @@
-// SHEET_NAME: aba do cronograma | TOKEN: senha igual à digitada no site
+// SHEET_NAME: aba do cronograma | TOKEN:senha
 const SHEET_NAME = "Assuntos R1";
-const TOKEN = "troque-esta-senha";
+const TOKEN = "senha";
 const STAGES = 7;
 const STAGE_WIDTH = 4;
 const FIRST_STAGE_INDEX = 6;
